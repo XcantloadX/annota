@@ -3,10 +3,9 @@ from pathlib import Path
 from typing import Optional, Union
 from datetime import datetime, timezone
 
+from annota.cli.error import InvalidFileError
 from pydantic import ValidationError
 
-from annota.cli.file import FORMAT_VERSION
-from annota.cli import CLI_VERSION, CLI_NAME
 from annota.cli.typing import Document, Annotation, ImageFile, Meta
 
 class ImageAsset:
@@ -40,6 +39,24 @@ class ImageAsset:
             raise e
 
     @classmethod
+    def loads(cls, json_str: str, source_path: Optional[Union[str, Path]] = None) -> 'ImageAsset':
+        """
+        Create an :class:`ImageAsset` from a JSON string. If ``source_path`` is
+        provided it will be used as the asset's ``path`` (for later ``dump`` calls).
+
+        :param json_str: JSON string representing a Document (the contents of a .meta file).
+        :param source_path: Optional path to associate with the created asset.
+        :raises InvalidFileError: If the string is not valid JSON or the JSON fails model validation.
+        :return: An :class:`ImageAsset` instance.
+        """
+        try:
+            doc = Document.model_validate_json(json_str)
+            src = Path(source_path) if source_path is not None else None
+            return cls(document=doc, source_path=src)
+        except (ValidationError, json.JSONDecodeError) as e:
+            raise InvalidFileError from e
+
+    @classmethod
     def create(
         cls,
         file_path: Union[str, Path],
@@ -54,9 +71,12 @@ class ImageAsset:
         :param image_height: Height of the image in pixels.
         :return: A new, unsaved :class:`Asset` instance.
         """
+        from annota.cli.file import FORMAT_VERSION
+        from annota.cli import CLI_VERSION, CLI_NAME
+
         file_path = Path(file_path)
         meta_path = file_path.with_suffix('.meta')
-        
+
         return cls(
             document=Document(
                 type='image',
@@ -91,7 +111,7 @@ class ImageAsset:
 
     def save(self, path: Union[str, Path, None] = None):
         """
-        Save the current annotations and metadata to a .meta file.
+        Dump the current annotations and metadata to a .meta file.
 
         :param path: Optional target path to save to. If ``None``, the original
                      load path will be used. If the instance was not loaded
@@ -100,11 +120,26 @@ class ImageAsset:
         """
         target_path = Path(path) if path else self.path
         if target_path is None:
-            raise ValueError('Cannot save: no target path provided and instance was not loaded from a file.')
+            raise ValueError('Cannot dump: no target path provided and instance was not loaded from a file.')
 
-        self._doc.meta.updated_at = datetime.now(timezone.utc)
-        json_str = self._doc.model_dump_json(indent=2)
+        json_str = self.dumps()
         target_path.write_text(json_str, encoding='utf-8')
+
+    def dumps(self, *, update_timestamp: bool = True, indent: int = 2) -> str:
+        """
+        Return the JSON representation of this asset as a string.
+
+        The asset's ``meta.updated_at`` timestamp will be refreshed before
+        serialization.
+
+        :param update_timestamp: If ``True``, update the ``meta.updated_at`` timestamp
+                                to the current time before serialization.
+        :param indent: Number of spaces to use for JSON indentation. Default is 2.
+        :return: The JSON string representing this asset.
+        """
+        if update_timestamp:
+            self._doc.meta.updated_at = datetime.now(timezone.utc)
+        return self._doc.model_dump_json(indent=indent)
 
     @property
     def annotations(self) -> list[Annotation]:

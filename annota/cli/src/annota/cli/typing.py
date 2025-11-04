@@ -4,11 +4,11 @@
 This module contains pydantic models and typing annotations for annota.
 """
 
-from typing import Literal, Any, Optional, Union
+from typing import Annotated, Literal, Any, Optional, Union
 from datetime import datetime
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
 
 BuiltInAnnotationType = Literal[
     'slice',
@@ -16,6 +16,7 @@ BuiltInAnnotationType = Literal[
     'point',
     'swipe'
 ]
+AnnotationType = Union[BuiltInAnnotationType, str]
 BuiltInDocumentType = Literal['image']
 
 
@@ -39,18 +40,22 @@ class Vec2(BaseModel):
 
 
 class SliceAnnotationAttributes(BaseModel):
+    type: Literal['slice']
     geometry: Rect
 
 
 class BoxAnnotationAttributes(BaseModel):
+    type: Literal['box']
     geometry: Rect
 
 
 class PointAnnotationAttributes(BaseModel):
+    type: Literal['point']
     geometry: Point
 
 
 class SwipeAnnotationAttributes(BaseModel):
+    type: Literal['swipe']
     geometry: Vec2
 
 
@@ -74,21 +79,27 @@ class Meta(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+def _attributes_type(data: dict) -> str:
+    type = data.get('type', None)
+    if type in ['slice', 'box', 'point', 'swipe']:
+        return type
+    else:
+        return 'custom'
 
 class Annotation(BaseModel):
     uuid: str = Field(default_factory=lambda: str(uuid4()))
-    type: Union[BuiltInAnnotationType, str]
     name: str
     """Name of the annotation. This will be used in the generated code."""
     display_name: str
     """Display name of the annotation. This will be used in the UI and code comments."""
-    description: str
+    description: Optional[str] = None
     attributes: Union[
-        SliceAnnotationAttributes,
-        BoxAnnotationAttributes,
-        PointAnnotationAttributes,
-        SwipeAnnotationAttributes
-    ] = Field(discriminator='type')
+        Annotated[SliceAnnotationAttributes, Tag('slice')],
+        Annotated[BoxAnnotationAttributes, Tag('box')],
+        Annotated[PointAnnotationAttributes, Tag('point')],
+        Annotated[SwipeAnnotationAttributes, Tag('swipe')],
+        Annotated[dict, Tag('custom')]
+    ] = Field(discriminator=Discriminator(_attributes_type))
     """Attributes of the annotation, which contains actual data for the annotation."""
     extra: Optional[dict[str, Any]] = None
     """Custom attributes. You can use this to store any additional data. Must be JSON-serializable."""
